@@ -1,0 +1,115 @@
+---
+title: "Saw Simeon MCL Test Instruction"
+author: "Saw Simeon"
+date: "2024-09-10"
+output: word_document
+---
+
+This cohort study investigates if patients with mantle cell lymphoma, a rare and aggressive subtype of non-Hodgkin lymphoma, are at a higher risk of a second primary malignancy (SPM). A SPM is a different type of cancer that develops after getting treated or not for a prior cancer and is considered to affect the prognosis of the patients. In this study, we investigate colorectal cancer (CRC) as SPM compared to general population controls. The start of CRC as SPM is defined as the day of the first ICD code starting by C18, C19, or C20. End of follow-up of the study is 2019-12-31.
+
+The data can be found in 3 files. 
+
+Demographic_dta.txt contains 7 variables:
+
+-	Id.number: The number identifying the person
+-	Start.of.flwp: Start of follow-up.  
+-	Gender: 1= Male, 2= Female  
+-	Age: The person’s age 
+-	Birthday: The person’s birthday   
+-	Date.of.Death: The day the person died 
+-	Date.of.Migration: The day the person migrated.
+
+Register_dta.txt contains 3 variables:
+
+-	Id.number: The number identifying the person
+-	ICD.codes: The list of ICD codes assigned at a specific date. 
+-	Date.of.ICD.codes: The date the ICD codes were assigned
+
+Exposure_dta.txt contains 2 variables:
+
+-	ID_Number: The number identifying the person
+-	Exposure: Whether the person is a MCL patient or a control 
+
+Present all requested results in the table below. You can use any software you like. How would you interpret these results? Write them down in a scientific way below the table (max 10 lines).
+Also paste the syntax from your calculations at the bottom of this document.
+
+## R Markdown
+
+```{r library}
+setwd("/Users/sawsimeon/Documents/Test-MCL/MCL data instructions")
+library(survival)
+library(dplyr)
+library(epitools)
+library(lubridate)
+```
+
+## Read and Merge the data
+
+
+```{r analysis}
+# read the file
+demographic = read.table("Demographic_dta.txt", header = TRUE, sep = "\t")
+register = read.table("Register_dta.txt", header = TRUE, sep = "\t")
+exposure = read.table("Exposure_dta.txt", header = TRUE, sep = "\t")
+# rename the file
+names(demographic) = c("Id.number", "Start.of.flwp", "Gender", "Age", "Birthday", "Date.of.Death", "Date.of.Migration")
+names(register) = c("Id.number", "ICD.codes", "Date.of.ICD.codes")
+names(exposure) = c("Id.number", "Exposure")
+# remove duplicate
+demographic = demographic[!duplicated(demographic$Id.number), ]
+register = register[!duplicated(register$Id.number), ]
+exposure = exposure[!duplicated(exposure$Id.number), ]
+# merge data
+data <- demographic %>% left_join(exposure, by = "Id.number") %>% left_join(register, by = "Id.number") 
+#filter for CRC ICD Codes because the study specifically investigates the risk of colorectal cancer (CRC) as 
+# a second primary malignancy (SPM) in patients with mantle cell lymphoma (MCL)
+crc_data <- data %>% filter(grepl("^C18|^C19|^C20", ICD.codes))
+# normalize date data for variables Start.of.flwp Date.of.Death Birthday Date.of.ICD.codes   
+crc_data <- crc_data %>%
+  mutate(Start.of.flwp = ymd(Start.of.flwp),
+         Date.of.Death = ymd(Date.of.Death),
+         Birthday = ymd(Birthday),
+         Date.of.ICD.codes = ymd(Date.of.ICD.codes))
+
+# Create a survival object
+crc_data <- crc_data %>%
+  mutate(event = ifelse(!is.na(Date.of.ICD.codes), 1, 0),
+         time = as.numeric(as.Date(Date.of.ICD.codes) - as.Date(Start.of.flwp)), 
+         end_date = pmin(as.Date(Date.of.Death, format="%Y-%m-%d"), as.Date("2019-12-31"), na.rm = TRUE), 
+         person_years = as.numeric(end_date - as.Date(Start.of.flwp)) / 365)
+
+
+
+# Summary statistics
+summary_stats <- crc_data %>%
+  group_by(Exposure) %>%
+  summarise(
+    n = n(),
+    person_years = sum(person_years, na.rm = TRUE),
+    events = sum(event)
+  )
+
+# Incidence rate per 1000 person-years
+summary_stats <- summary_stats %>%
+  mutate(
+    incidence_rate = (events / person_years) * 1000,
+    ci_lower = (incidence_rate - 1.96 * sqrt(incidence_rate / person_years)),
+    ci_upper = (incidence_rate + 1.96 * sqrt(incidence_rate / person_years))
+  )
+
+# Fit a Cox proportional hazards model
+cox_model <- coxph(Surv(time, event) ~ Exposure, data = crc_data)
+cox_summary <- summary(cox_model)
+
+# Adjusted HR (example: adjusting for age and gender)
+cox_model_adj <- coxph(Surv(time, event) ~ Exposure + Age + Gender, data = crc_data)
+cox_summary_adj <- summary(cox_model_adj)
+
+# Print results
+print(summary_stats)
+print(cox_summary)
+print(cox_summary_adj)
+
+
+```
+
